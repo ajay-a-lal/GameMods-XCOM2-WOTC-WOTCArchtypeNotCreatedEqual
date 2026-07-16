@@ -17,7 +17,9 @@ static function ATNCE_TestGenerateSoldierStats()
 	local int numberOfSoldiers;
 	local int i;
 	local int j;
+	local int charOffenseValue, charPsiOffenseValue, combatIntelligence;
 	local ATNCE_SoldierDetail soldierDetails;
+	local ATNCE_CoreConfig coreConfig;
 
 	numberOfSoldiers = default.ATNCE_TestSolderGenerationCount;
 
@@ -25,6 +27,8 @@ static function ATNCE_TestGenerateSoldierStats()
 	{
 		return;
 	}
+	
+	coreConfig = class'X2DownloadableContentInfo_WOTCArchetypeNotCreatedEqual'.static.ATNCE_GetCoreConfig();
 	
 	for (i = 0; i < numberOfSoldiers; ++i)
 	{	
@@ -37,9 +41,25 @@ static function ATNCE_TestGenerateSoldierStats()
 		`LOG("[SOLDIER_" @ i @ "] Refine Stats: " @ soldierDetails.SoldierStats.Length, true, 'WOTCArchetype_ATNCE');
 
 		for (j = 0; j < soldierDetails.SoldierStats.Length; ++j)
-		{
+		{	
+			if (soldierDetails.SoldierStats[j].CharStatType == eStat_Offense)
+			{
+				charOffenseValue = soldierDetails.SoldierStats[j].StatValue;
+			}
+			else if (soldierDetails.SoldierStats[j].CharStatType == eStat_PsiOffense)
+			{
+				charPsiOffenseValue = soldierDetails.SoldierStats[j].StatValue;
+			}
+			
 			`LOG("[SOLDIER_" @ i @ "] " @ soldierDetails.SoldierStats[j].CharStatType @ " = " @ soldierDetails.SoldierStats[j].StatValue @ " Tier" @ soldierDetails.SoldierStats[j].Tier @ soldierDetails.SoldierStats[j].StatMessage, true, 'WOTCArchetype_ATNCE');
-		}	
+		}
+
+		if (coreConfig.ATNCE_SyncCombatIntelligence)
+		{
+			combatIntelligence = class'X2DownloadableContentInfo_WOTCArchetypeNotCreatedEqual'.static.ResolveCombatIntelligence(charOffenseValue, charPsiOffenseValue);
+
+			`LOG("[SOLDIER_" @ i @ "]    : CombatIntelligence = " @ combatIntelligence, true, 'WOTCArchetype_ATNCE');
+		}
 	}
 }
 

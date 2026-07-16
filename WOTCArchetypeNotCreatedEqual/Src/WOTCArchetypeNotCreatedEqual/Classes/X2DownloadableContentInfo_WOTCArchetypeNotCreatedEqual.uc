@@ -188,6 +188,7 @@ struct ATNCE_CoreConfig
 	var array<name> ATNCE_ExcludedTemplates;
 	var bool ATNCE_EnableLogging;
 	var bool ATNCE_EnableArchetypeSoldiers;
+	var bool ATNCE_SyncCombatIntelligence;
 	var ATNCE_MaxNextTierOverlap ATNCE_TierMaxOverlaps;
 	var array<ATNCE_StatConfig> ATNCE_StatTierWeights;
 	var array<ATNCE_ArchetypeStatConfig> ATNCE_ArchetypeSoldiers;
@@ -200,6 +201,7 @@ var localized string ATNCE_Tooltip;
 var config array<name> ATNCE_ExcludedTemplates;
 var config bool ATNCE_EnableLogging;
 var config bool ATNCE_EnableArchetypeSoldiers;
+var config bool ATNCE_SyncCombatIntelligence;
 var config ATNCE_MaxNextTierOverlap ATNCE_TierMaxOverlaps;
 var config array<ATNCE_StatConfig> ATNCE_StatTierWeights;
 var config array<ATNCE_ArchetypeStatConfig> ATNCE_ArchetypeSoldiers;
@@ -215,6 +217,7 @@ static function ATNCE_CoreConfig ATNCE_GetCoreConfig()
 	config.ATNCE_ExcludedTemplates = default.ATNCE_ExcludedTemplates;
 	config.ATNCE_EnableLogging = default.ATNCE_EnableLogging;
 	config.ATNCE_EnableArchetypeSoldiers = default.ATNCE_EnableArchetypeSoldiers;
+	config.ATNCE_SyncCombatIntelligence = default.ATNCE_SyncCombatIntelligence;
 	config.ATNCE_TierMaxOverlaps = default.ATNCE_TierMaxOverlaps;
 	config.ATNCE_StatTierWeights = default.ATNCE_StatTierWeights;
 	config.ATNCE_ArchetypeSoldiers = default.ATNCE_ArchetypeSoldiers;
@@ -320,6 +323,7 @@ function ATNCE_OnStatAssignmentCompleteFn(XComGameState_Unit unit)
 	local ATNCE_SoldierDetail soldierDetail;
 	local int i;
 	local bool isAtnceSecondWaveEnabled;
+	local int combatIntelligence;
 
 	isAtnceSecondWaveEnabled = `SecondWaveEnabled('ATNCE');
 
@@ -367,7 +371,13 @@ function ATNCE_OnStatAssignmentCompleteFn(XComGameState_Unit unit)
 		`LOG("    :" @ soldierDetail.SoldierStats[i].CharStatType @ " = " @ soldierDetail.SoldierStats[i].StatValue @ " Tier: " @ soldierDetail.SoldierStats[i].Tier @ "->" @ soldierDetail.SoldierStats[i].StatMessage, default.ATNCE_EnableLogging, 'WOTCArchetype_ATNCE');
 	}
 	
-	SyncCombatIntelligence(unit);
+	if (default.ATNCE_SyncCombatIntelligence)
+	{
+		combatIntelligence = ResolveCombatIntelligence(unit.GetBaseStat(eStat_Offense), unit.GetBaseStat(eStat_PsiOffense));
+		unit.ComInt = ECombatIntelligence(combatIntelligence);
+	}
+
+	`LOG("    : CombatIntelligence = " @ combatIntelligence, default.ATNCE_EnableLogging, 'WOTCArchetype_ATNCE');
 
 	unit.bEverAppliedFirstTimeStatModifiers = true;
 
@@ -640,7 +650,7 @@ static function array<ATNCE_SoldierStat> ATNCE_RefineSoldierStats(ATNCE_SoldierD
     return returnRefinedSoldierStats;
 }
 
-/// Function: SyncCombatIntelligence
+/// Function: ResolveCombatIntelligence
 /// Purpose: Syncs Combat Intelligence independently from Aim and Psi Offense deltas.
 /// Computes CI from each stat separately (base Average + adj), final = max(CI_Aim, CI_Psi).
 /// Tuned thresholds: >=12:+2, >=6:+1, <=-3:-1, <=-7:-2.
@@ -665,47 +675,56 @@ static function array<ATNCE_SoldierStat> ATNCE_RefineSoldierStats(ATNCE_SoldierD
     High      |   3   |         ~21%         
     Very High |   4   |          ~10%         
 */
-static function SyncCombatIntelligence(XComGameState_Unit unit)
+static function int ResolveCombatIntelligence(int offenceValue, int psiOffenceValue)
 {
     local int aimDelta, psiDelta;
-    local int aimAdj, psiAdj, ciAim, ciPsi, finalCI;
-    local int midAim, midPsi;
+    local int ciAim, ciPsi, finalCI;
+    local int midAim, midPsi, highAim, highPsi;
+	local int aimRangeSpread, psiRangeSpread;
 
     midAim = ATNCE_GetRangeValue(eStat_Offense, ATNCE_RangeMid, 65);
     midPsi = ATNCE_GetRangeValue(eStat_PsiOffense, ATNCE_RangeMid, 20); 
+	highAim = ATNCE_GetRangeValue(eStat_Offense, ATNCE_RangeHigh, 75);
+    highPsi = ATNCE_GetRangeValue(eStat_PsiOffense, ATNCE_RangeHigh, 32);
 
-    aimDelta = int(unit.GetBaseStat(eStat_Offense)) - midAim;
-    psiDelta = int(unit.GetBaseStat(eStat_PsiOffense)) - midPsi;
+    aimDelta = offenceValue - midAim;
+    psiDelta = psiOffenceValue - midPsi;
+	
+	aimRangeSpread = highAim - midAim;
+	psiRangeSpread = highPsi - midPsi;
 
-    aimAdj = 0;
-    if (aimDelta >= 10) aimAdj = 2;
-    else if (aimDelta >= 6) aimAdj = 1;
-    else if (aimDelta <= -7) aimAdj = -2;
-    else if (aimDelta <= -3) aimAdj = -1;
+    if (aimRangeSpread > 0)
+    {
+        ciAim = 2 + Round(float(aimDelta) / (float(aimRangeSpread) / 2.0));
+    }
+    else
+    {
+        ciAim = (offenceValue >= midAim) ? 2 : 1; 
+    }
 
-    psiAdj = 0;
-    if (psiDelta >= 12) psiAdj = 2;
-    else if (psiDelta >= 6) psiAdj = 1;
-    else if (psiDelta <= -7) psiAdj = -2;
-    else if (psiDelta <= -3) psiAdj = -1;
-
-    ciAim = 2 + aimAdj;
-    ciPsi = 2 + psiAdj;
-
+    if (psiRangeSpread > 0)
+    {
+        ciPsi = 2 + Round(float(psiDelta) / (float(psiRangeSpread) / 2.0));
+    }
+    else
+    {
+        ciPsi = (psiOffenceValue >= midPsi) ? 2 : 1;
+    }
+    
     finalCI = Max(ciAim, ciPsi);
 
     if (finalCI <= 0) 
-	{
-		finalCI = (`SYNC_RAND_STATIC(2) == 0) ? 1 : 0;
-	}
+    {
+        finalCI = (`SYNC_RAND_STATIC(2) == 0) ? 1 : 0;
+    }
 
     if (finalCI > 4) finalCI = 4;
 
-    unit.ComInt = ECombatIntelligence(finalCI);
-
-	`LOG("    CI Sync: AimD="@aimDelta@" Adj="@aimAdj@" CI="@ciAim@
-         " | PsiD="@psiDelta@" Adj="@psiAdj@" CI="@ciPsi@
+	`LOG("    CI Sync: AimD="@aimDelta@" CI="@ciAim@
+         " | PsiD="@psiDelta@" CI="@ciPsi@
          " | Final="@finalCI, default.ATNCE_EnableLogging, 'WOTCArchetype_ATNCE');
+
+	return finalCI;
 }
 
 static function int ATNCE_GetRangeValue(ECharStatType statType, ATNCE_StatRangeType rangeType, int defaultStatValue)
